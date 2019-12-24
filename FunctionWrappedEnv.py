@@ -4,35 +4,7 @@ import tensorflow as tf
 from stable_baselines.common.distributions import make_proba_dist_type
 from stable_baselines.common import tf_util
 import gym
-
-class replaybuffer():
-    def __init__(self, maxlen):
-        self.data = []
-        self.maxlen = maxlen
-
-
-    def len(self):
-        return len(self.data)
-
-
-    def add(self, new_data):
-        self.data.append(new_data)
-        reward = new_data['reward']
-        gamma = 0.99
-        for i in range(self.len() - 1, 0, -1):
-            self.data[i]['reward'] = reward * gamma
-            gamma = gamma * 0.99
-        if self.len() > self.maxlen:
-            del self.data[0]
-        return
-
-
-    def clear(self):
-        self.data = []
-
-
-    def get_data(self):
-        return self.data
+from replayBuf import replaybuffer
 
 
 class FunctionEnv(envWrapper.WrappedEnvClass):
@@ -54,11 +26,9 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         self._policy_proba = None
         self.pg_loss = None
         self.params = None
-        self.obs = tf.placeholder(tf.float32, shape=(None, 2))
-
-        self.policy = self.init_network_continuous(self.obs, 'net')
+        self.obs = tf.placeholder(tf.float32, shape=(None, self.neuro_structure[0]))
+        self.policy = self.init_network('net')
         self.sess.run(tf.global_variables_initializer())
-
 
     def reset(self):
         self.last_state = super().reset()
@@ -93,23 +63,42 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         x = np.tanh(x)
         return np.argmax(x)
 
-    def init_network_continuous(self, input, name):
+    def init_network(self, name):
+        """
+        Initialize networks
+        :param name: variable scope names
+        :return: temporal policy.
+        """
         with tf.variable_scope(name):
-            model = tf.layers.dense(input, 8, activation=tf.nn.relu)
-            model = tf.layers.dense(model, self.action_space.shape[0], activation=tf.nn.sigmoid)
+            # build temporal neural networks
+            model = tf.layers.dense(inputs=self.obs, units=self.neuro_structure[1], trainable=False)
+            for i in range(len(self.neuro_structure) - 3):
+                model = tf.layers.dense(model, self.neuro_structure[i + 2], activation=tf.nn.relu)
+            if type(self.action_space) is gym.spaces.Discrete:
+                model = tf.layers.dense(model, self.neuro_structure[-1], activation=tf.nn.softmax)
+            else:
+                model = tf.layers.dense(model, self.neuro_structure[-1], activation = tf.nn.sigmoid)
+
+        # build probability distribution (value function and advantage)
 
         self._proba_distribution, _, _ = \
             self._pdtype.proba_distribution_from_latent(model, model, init_scale=0.01)
 
+        # probability distribution of action
         self.action_ph = self._pdtype.sample_placeholder([None], name='action_ph')
         self._policy_proba = [self._proba_distribution.mean, self._proba_distribution.std]
-        self.params = tf_util.get_trainable_vars('net')
+        self.params = tf_util.get_trainable_vars(name)
         self.pg_loss = tf.gradients(self._proba_distribution.neglogp(self.action_ph), self.params)
         return model
 
-    def predict(self, observation):
+    def predict(self, observation, mode="discrete"):
         action = self.sess.run([self.policy],{self.obs: observation})
-        return action
+        if mode == "discrete":
+            return np.random.choice(a=np.arange(len(action)),  p=action)
+        elif mode == "continuous":
+            return action
+        else:
+            raise KeyError
 
     def get_gradeints(self):
         gradient_set = []
