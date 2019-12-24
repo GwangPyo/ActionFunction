@@ -69,8 +69,11 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         return np.copy(self.last_state)
 
     def step(self, action):
+        # taking sinh of action enlarges range of the action space
         action = np.sinh(action)
+        # this function should be changed to set weight of the temporal policy
         temp_neuron = self.build_neurons(action)
+        self.policy.setWeights(temp_neuron)
         r_cnt = 0
         done = False
         info = {}
@@ -115,9 +118,9 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         with tf.variable_scope(name):
             # build temporal neural networks
             if len(self.neuro_structure) >= 2:
-                model = tf.layers.dense(inputs=self.obs, units=self.neuro_structure[0], trainable=False)
+                model = tf.layers.dense(inputs=self.obs, units=self.neuro_structure[0],
+                                        trainable=False)
                 shapes.append((list_shape, self.neuro_structure[0]))
-
                 for i in range(len(self.neuro_structure) -1):
                     model = tf.layers.dense(model, self.neuro_structure[i + 1], activation=tf.nn.relu)
                     shapes.append((self.neuro_structure[i], self.neuro_structure[i + 1]))
@@ -134,10 +137,18 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
                                             units=self.neuro_structure[0], trainable=False, activation=tf.nn.softmax)
                 shapes.append((list_shape, self.neuro_structure[0]))
 
-        # build probability distribution (value function and advantage)
+        # inner model shape is a variable which denotes the shapes of the temporal neural networks
+        # for instance (2, 4) with observation space (4, ) the variable will be
+        # [ (4, 2), (2, 4)]
+        # this is structure of the neural networks
         self.inner_model_shape = shapes
+        # partition_table is a variable for the environment, containing pre-evaluation of action
+        # for instance, (4, 2) (2, 2) shapes of temporal neural networks, partition slice will be [8, 12]
+        # so that action[:8] is corresponds to (4, 2) and action[8: 12] corresponds to [2, 2]
         self.partition_table = self.build_action_partion_table()
         self.action_space = gym.spaces.Box(low=-3, high=3, shape=(self.partition_table[-1], ))
+
+        # build probability distribution (value function and advantage)
         self._pdtype = make_proba_dist_type(self.action_space)
         self._proba_distribution, _, _ = \
             self._pdtype.proba_distribution_from_latent(model, model, init_scale=0.01)
@@ -187,6 +198,7 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
             table.append(cnt)
         return table
 
+    # THIS FUNCTION SHOULD BE CHANGED TO SET WEIGHT OF THE TEMPORAL POLICY
     def build_neurons(self, action):
         neurons = []
         for i in range(len(self.partition_table) - 1):
