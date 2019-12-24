@@ -8,26 +8,56 @@ from replayBuf import replaybuffer
 
 
 class FunctionEnv(envWrapper.WrappedEnvClass):
+    """
+    Wrapping Environment for function Action
+    """
+    DISCRETE = 0
+    CONTINUOUS = 1
+
     def __init__(self, wrappedEnv, num_seq, neuro_structure, ):
+        """
+        :param wrappedEnv: The target environment object that shall be wrapped
+        :param num_seq: The life time of the action function. Maybe variable length
+        :param neuro_structure: The structure of action function. data type is tuple.
+        e.g.,
+        if local observation space shape is 3, and neuro_structure is (3,4,5)
+        Then it will construct
+        (3, 3), (3, 4), (4, 5)
+        shape of neural network
+        """
         super().__init__(wrappedEnv, num_seq)
         assert type(neuro_structure) is tuple
-        self.sess = tf.Session()
-        self.neuro_structure = self.parse_neuro_structure(neuro_structure)
-        self.partition_table = self.build_action_partion_table()
-        a = self.partition_table[-1]
-        self.action_space = gym.spaces.Box(low=-3 ,high=3, shape=(a, ))
-        self.last_state = None
-        self.step_cnt = 0
-        self.replay_buffer = replaybuffer(maxlen=512)
 
+        # check wrapped environment's action space type
+        if type(self.wrapped_env.action_space) is gym.spaces.Box:
+            self.mode = FunctionEnv.DISCRETE
+        else:
+            self.mode = FunctionEnv.CONTINUOUS
+
+        # tensorflow session for the neural network
+        self.sess = tf.Session()
+        # observation space
+        obs_shape = list(self.wrapped_env.observation_space.shape)
+        obs_shape.insert(0, None)
+        self.obs = tf.placeholder(tf.float32, shape=obs_shape)
+        a = 1
+        for sh in range(len(self.wrapped_env.observation_space.shape)):
+            a *= sh
+        for sh in neuro_structure:
+            a *= sh
+        self.action_space = gym.spaces.Box(low=-3, high=3, shape=(a, ))
         self._pdtype = make_proba_dist_type(self.action_space)
         self._proba_distribution = None
         self.action_ph = None
         self._policy_proba = None
         self.pg_loss = None
         self.params = None
-        self.obs = tf.placeholder(tf.float32, shape=(None, self.neuro_structure[0]))
+        self.neuro_structure = neuro_structure
         self.policy = self.init_network('net')
+        self.neuro_structure = self.parse_neuro_structure(neuro_structure)
+        self.last_state = None
+        self.step_cnt = 0
+        self.replay_buffer = replaybuffer(maxlen=512)
         self.sess.run(tf.global_variables_initializer())
 
     def reset(self):
@@ -71,14 +101,22 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         """
         with tf.variable_scope(name):
             # build temporal neural networks
-            model = tf.layers.dense(inputs=self.obs, units=self.neuro_structure[1], trainable=False)
-            for i in range(len(self.neuro_structure) - 3):
-                model = tf.layers.dense(model, self.neuro_structure[i + 2], activation=tf.nn.relu)
-            if type(self.action_space) is gym.spaces.Discrete:
-                model = tf.layers.dense(model, self.neuro_structure[-1], activation=tf.nn.softmax)
-            else:
-                model = tf.layers.dense(model, self.neuro_structure[-1], activation = tf.nn.sigmoid)
+            if len(self.neuro_structure) > 2:
+                model = tf.layers.dense(inputs=self.obs, units=self.neuro_structure[0], trainable=False)
 
+                for i in range(len(self.neuro_structure) -1):
+                    model = tf.layers.dense(model, self.neuro_structure[i], activation=tf.nn.relu)
+                if self.mode == FunctionEnv.DISCRETE:
+                    model = tf.layers.dense(model, self.neuro_structure[-1], activation=tf.nn.softmax)
+                else:
+                    model = tf.layers.dense(model, self.neuro_structure[-1], activation=tf.nn.sigmoid)
+            else:
+                if self.mode == FunctionEnv.DISCRETE:
+                    model = tf.layers.dense(inputs=self.obs,
+                                            units=self.neuro_structure[0], trainable=False, activation=tf.nn.softmax)
+                else:
+                    model = tf.layers.dense(inputs=self.obs,
+                                            units=self.neuro_structure[0], trainable=False, activation=tf.nn.softmax)
         # build probability distribution (value function and advantage)
 
         self._proba_distribution, _, _ = \
@@ -91,11 +129,12 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         self.pg_loss = tf.gradients(self._proba_distribution.neglogp(self.action_ph), self.params)
         return model
 
-    def predict(self, observation, mode="discrete"):
-        action = self.sess.run([self.policy],{self.obs: observation})
-        if mode == "discrete":
+    def predict(self, observation):
+
+        action = self.sess.run([self.policy], {self.obs: observation})
+        if self.mode == FunctionEnv.DISCRETE:
             return np.random.choice(a=np.arange(len(action)),  p=action)
-        elif mode == "continuous":
+        elif self.mode == FunctionEnv.CONTINUOUS:
             return action
         else:
             raise KeyError
@@ -118,15 +157,6 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
             for i in range(len(action_structure) - 1):
                 shapes.append((action_structure[i], action_structure[i + 1]))
             return shapes
-
-    def build_action_partion_table(self):
-        cnt = 0
-        table = [0]
-        for sh in self.neuro_structure:
-            size = sh[0] * sh[1]
-            cnt += size
-            table.append(cnt)
-        return table
 
     def build_neurons(self, action):
         neurons = []
