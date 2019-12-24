@@ -46,15 +46,19 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         for sh in neuro_structure:
             a *= sh
         self.action_space = gym.spaces.Box(low=-3, high=3, shape=(a, ))
-        self._pdtype = make_proba_dist_type(self.action_space)
+
         self._proba_distribution = None
         self.action_ph = None
         self._policy_proba = None
         self.pg_loss = None
         self.params = None
+        self.inner_model_shape = None
         self.neuro_structure = neuro_structure
         self.policy = self.init_network('net')
-        self.neuro_structure = self.parse_neuro_structure(neuro_structure)
+        print(self.inner_model_shape)
+        self.partition_table = self.build_action_partion_table()
+        a = self.partition_table[-1]
+
         self.last_state = None
         self.step_cnt = 0
         self.replay_buffer = replaybuffer(maxlen=512)
@@ -93,19 +97,30 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         x = np.tanh(x)
         return np.argmax(x)
 
-    def init_network(self, name):
+    def init_network(self,  name):
         """
         Initialize networks
         :param name: variable scope names
         :return: temporal policy.
         """
+        shapes = []
+        list_shape = self.obs.shape.as_list()
+        if list_shape[0] is None:
+            del list_shape[0]
+        if len(list_shape) == 1:
+            list_shape = list_shape[0]
+        else:
+            list_shape = tuple(list_shape)
+
         with tf.variable_scope(name):
             # build temporal neural networks
-            if len(self.neuro_structure) > 2:
+            if len(self.neuro_structure) >= 2:
                 model = tf.layers.dense(inputs=self.obs, units=self.neuro_structure[0], trainable=False)
+                shapes.append((list_shape, self.neuro_structure[0]))
 
                 for i in range(len(self.neuro_structure) -1):
-                    model = tf.layers.dense(model, self.neuro_structure[i], activation=tf.nn.relu)
+                    model = tf.layers.dense(model, self.neuro_structure[i + 1], activation=tf.nn.relu)
+                    shapes.append((self.neuro_structure[i], self.neuro_structure[i + 1]))
                 if self.mode == FunctionEnv.DISCRETE:
                     model = tf.layers.dense(model, self.neuro_structure[-1], activation=tf.nn.softmax)
                 else:
@@ -117,8 +132,13 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
                 else:
                     model = tf.layers.dense(inputs=self.obs,
                                             units=self.neuro_structure[0], trainable=False, activation=tf.nn.softmax)
-        # build probability distribution (value function and advantage)
+                shapes.append((list_shape, self.neuro_structure[0]))
 
+        # build probability distribution (value function and advantage)
+        self.inner_model_shape = shapes
+        self.partition_table = self.build_action_partion_table()
+        self.action_space = gym.spaces.Box(low=-3, high=3, shape=(self.partition_table[-1], ))
+        self._pdtype = make_proba_dist_type(self.action_space)
         self._proba_distribution, _, _ = \
             self._pdtype.proba_distribution_from_latent(model, model, init_scale=0.01)
 
@@ -129,9 +149,9 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         self.pg_loss = tf.gradients(self._proba_distribution.neglogp(self.action_ph), self.params)
         return model
 
-    def predict(self, observation):
+    def predict(self, policy, observation):
 
-        action = self.sess.run([self.policy], {self.obs: observation})
+        action = self.sess.run([policy], {self.obs: observation})
         if self.mode == FunctionEnv.DISCRETE:
             return np.random.choice(a=np.arange(len(action)),  p=action)
         elif self.mode == FunctionEnv.CONTINUOUS:
@@ -158,11 +178,20 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
                 shapes.append((action_structure[i], action_structure[i + 1]))
             return shapes
 
+    def build_action_partion_table(self):
+        cnt = 0
+        table = [0]
+        for sh in self.inner_model_shape:
+            size = sh[0] * sh[1]
+            cnt += size
+            table.append(cnt)
+        return table
+
     def build_neurons(self, action):
         neurons = []
         for i in range(len(self.partition_table) - 1):
             a = action[self.partition_table[i]: self.partition_table[i + 1]]
-            a = a.reshape(self.neuro_structure[i])
+            a = a.reshape(self.inner_model_shape[i])
             neurons.append(a)
         return neurons
 
