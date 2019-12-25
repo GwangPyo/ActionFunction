@@ -11,7 +11,7 @@ if __name__ == "__main__":
     neuro_structure=  (4, 2)
     env = FunctionEnv(cartpole, 20, neuro_structure)
 
-    model = SAC(LnMlpPolicy, env, verbose=0, full_tensorboard_log=True,
+    model = SAC(LnMlpPolicy, env, verbose=1, full_tensorboard_log=True,
                 tensorboard_log="D:\논문\ActionLearningTensorBoard")
     model.learn(1000000)
 

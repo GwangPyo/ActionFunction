@@ -5,6 +5,7 @@ from stable_baselines.common.distributions import make_proba_dist_type
 from stable_baselines.common import tf_util
 import gym
 from replayBuf import replaybuffer
+from utilities import softmax
 
 
 class FunctionEnv(envWrapper.WrappedEnvClass):
@@ -73,7 +74,14 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
         action = np.sinh(action)
         # this function should be changed to set weight of the temporal policy
         temp_neuron = self.build_neurons(action)
+
+        """
+        temporally we use numpy array  as a neural networks. 
+        For the next progress, we will do it as a tensorflow network and extract gradient, but now, we are going to 
+        focus on n-step planning 
         self.policy.setWeights(temp_neuron)
+        
+        
         r_cnt = 0
         done = False
         info = {}
@@ -88,6 +96,21 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
             if done:
                 return s, r_cnt, done, info
         return self.last_state, r_cnt, done , info
+        """
+
+        r_cnt = 0
+        done = False
+        info = {}
+        self.step_cnt += 1
+        seq = self.num_seq
+        for _ in range(seq):
+            a = self.run_neuro_discrete(self.last_state, temp_neuron)
+            s, r, done, info = self.wrapped_env.step(a)
+            self.last_state = s
+            r_cnt += r
+            if done:
+                return s, r_cnt, done, info
+        return self.last_state, r_cnt, done , info
 
     @staticmethod
     def run_neuro_discrete(state, neurons):
@@ -97,8 +120,8 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
             x = np.matmul(x, layer)
             x = np.maximum(x, 0, x)
         x = np.matmul(x, neurons[-1])
-        x = np.tanh(x)
-        return np.argmax(x)
+        x = softmax(x)
+        return np.random.choice(a=np.arange(len(x)), p=x)
 
     def init_network(self,  name):
         """
