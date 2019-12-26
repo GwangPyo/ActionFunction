@@ -15,7 +15,7 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
     DISCRETE = 0
     CONTINUOUS = 1
 
-    def __init__(self, wrappedEnv, num_seq, neuro_structure, ):
+    def __init__(self, wrappedEnv, num_seq, neuro_structure):
         """
         :param wrappedEnv: The target environment object that shall be wrapped
         :param num_seq: The life time of the action function. Maybe variable length
