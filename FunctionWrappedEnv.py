@@ -4,7 +4,7 @@ import tensorflow as tf
 from stable_baselines.common.distributions import make_proba_dist_type
 from stable_baselines.common import tf_util
 import gym
-from replayBuf import replaybuffer
+
 from utilities import softmax
 
 
@@ -62,7 +62,6 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
 
         self.last_state = None
         self.step_cnt = 0
-        self.replay_buffer = replaybuffer(maxlen=512)
         self.sess.run(tf.global_variables_initializer())
 
     def reset(self):
