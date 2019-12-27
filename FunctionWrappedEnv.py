@@ -120,6 +120,8 @@ class FunctionEnv(envWrapper.WrappedEnvClass):
             x = np.matmul(x, layer)
             x = np.maximum(x, 0, x)
         x = np.matmul(x, neurons[-1])
+        x = np.float64(x)
+        x = np.clip(x, a_min=-25, a_max=150)
         x = softmax(x)
         return np.random.choice(a=np.arange(len(x)), p=x)
 
