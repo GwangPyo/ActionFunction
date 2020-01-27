@@ -1,18 +1,18 @@
-from keras.layers import Input, Dense, Reshape, Flatten
-from keras.layers import BatchNormalization, Activation,  Lambda
-from keras.layers.advanced_activations import LeakyReLU
-from keras.layers.convolutional import Conv2D, Conv2DTranspose
+import tensorflow as tf
+from keras.layers import BatchNormalization, Activation, Lambda, Dense, Reshape, LeakyReLU, Input, Flatten
+from keras.layers import Conv2D, Conv2DTranspose
 from keras.models import Sequential, Model
 from keras.optimizers import Adam
 from PIL import Image
 import numpy as np
 from keras import backend as K
 from keras.losses import binary_crossentropy
+
 BATCH_SIZE = 64
 
 
 class AAE(object):
-    def __init__(self, shape, latent_dim=8, channel=4):
+    def __init__(self, shape, latent_dim=48, channel=4):
         self.shape= shape
         self.shape_name = shape[0]
         self.name="AAE"
@@ -31,9 +31,8 @@ class AAE(object):
             metrics=['accuracy'])
 
         self.encoder = self.build_encoder()
+        self.encoder.summary()
         self.decoder = self.build_decoder()
-
-
         img = Input(shape=self.img_shape)
         # The generator takes the image, encodes it and reconstructs it
         # from the encoding
@@ -55,20 +54,19 @@ class AAE(object):
     def build_decoder(self):
         # shared weights
         model = Sequential()
-        model.add(Dense(16, input_dim=self.latent_dim, activation="relu"))
+        model.add(Dense(48, input_dim=self.latent_dim, activation="relu"))
         model.add(BatchNormalization(momentum=0.8))
-        model.add(Reshape((2, 2, 4)))
+        model.add(Reshape((3, 4, 4)))
         model.add(Conv2DTranspose(filters=15,
-                   kernel_size=5,
-                   strides=(1, 4),
-                   padding='same'))
-        model.add(LeakyReLU(alpha=0.2))
+                   kernel_size=2,
+                   strides=(2, 4),
+                   padding='same', activation='relu'))
         model.add(Conv2DTranspose(filters=10,
                    kernel_size=5,
-                   strides=(2, 5),
+                   strides=(7, 5),
                    padding='same'))
         model.add(LeakyReLU(alpha=0.2))
-        model.add(Conv2DTranspose(filters=4,
+        model.add(Conv2DTranspose(filters=self.channels,
                    kernel_size=5,
                    strides=(5, 2),
                    padding='same'))
@@ -104,24 +102,22 @@ class AAE(object):
 
     def build_encoder(self):
         img = Input(shape=self.img_shape)
+        h = Conv2D(filters=55,
+                   kernel_size=(16, 10),
+                   activation='relu',
+                   strides=9)(img)
+        h = Conv2D(filters=5, kernel_size=(1, 1))(h)
         h = Conv2D(filters=15,
                    kernel_size=5,
                    activation='relu',
-                   strides=2,
-                   padding='same')(img)
+                   strides=2)(h)
         h = Conv2D(filters=5, kernel_size=(1, 1))(h)
-        h = Conv2D(filters=5,
-                   kernel_size=5,
-                   activation='relu',
-                   strides=2,
-                   padding='same')(h)
         h = Flatten()(h)
-        h = Dense(32, activation="elu")(h)
+        h = Dense(48, activation="elu")(h)
         mu = Dense(self.latent_dim)(h)
         log_var = Dense(self.latent_dim)(h)
-        latent_repr = Lambda(lambda p: p[0] + K.random_normal(K.shape(p[0])) * K.exp(p[1] / 2),
+        latent_repr = Lambda(lambda p: p[0] + tf.random_normal(K.shape(p[0])) * tf.exp(p[1] / 2),
                 output_shape=lambda p: p[0])([mu, log_var])
-
         return Model(img, latent_repr)
 
     def save(self):
@@ -151,6 +147,7 @@ class AAE(object):
 
         # Load the dataset
         X_train = self.load_data(data_path)
+        X_train = X_train / 255
         X_train = np.squeeze(X_train)
 
         # Adversarial ground truths
@@ -191,7 +188,7 @@ class AAE(object):
             if epoch % sample_interval == 0 :
                 encoded_repr = self.encoder.predict_on_batch(imgs)
                 img = self.decoder.predict_on_batch(encoded_repr)
-                for i in range(len(img)):
+                for i in range(5):
                     im = img[i][:, :, 0]
                     im = im * 255
                     im = np.uint8(im)
@@ -274,19 +271,19 @@ class VAE(object):
 
     def build_encoder(self):
         img = Input(shape=(20, 80, 4))
-        h = Conv2D(filters=15,
+        h = Conv2D(filters=25,
                    kernel_size=5,
                    activation='relu',
                    strides=2,
                    padding='same')(img)
-        h = Conv2D(filters=5, kernel_size=(1, 1))(h)
-        h = Conv2D(filters=5,
+        h = Conv2D(filters=15, kernel_size=(1, 1))(h)
+        h = Conv2D(filters=15,
                    kernel_size=5,
                    activation='relu',
                    strides=2,
                    padding='same')(h)
         h = Flatten()(h)
-        h = Dense(32, activation="elu")(h)
+        h = Dense(64, activation="elu")(h)
         mu = Dense(self.latent_dim, name="z_mean")(h)
         log_var = Dense(self.latent_dim, name="z_log_var")(h)
         return Model(input=img, output=[mu, log_var])
@@ -295,22 +292,22 @@ class VAE(object):
         # shared weights
 
         z = Input(shape=(self.latent_dim, ))
-        x  = Dense(16,  activation="relu")(z)
+        x  = Dense(32,  activation="relu")(z)
         x = BatchNormalization(momentum=0.8)(x)
-        x = Reshape((2, 2, 4))(x)
+        x = Reshape((2, 4, 4))(x)
         x = Conv2DTranspose(filters=15,
                    kernel_size=5,
-                   strides=(1, 4),
+                   strides=(2, 4),
                    padding='same')(x)
         x = LeakyReLU(alpha=0.2)(x)
         x = Conv2DTranspose(filters=10,
                    kernel_size=5,
-                   strides=(2, 5),
+                   strides=(4, 5),
                    padding='same')(x)
         x = LeakyReLU(alpha=0.2)(x)
-        img = Conv2DTranspose(filters=4,
+        img = Conv2DTranspose(filters=3,
                    kernel_size=5,
-                   strides=(5, 2),
+                   strides=(5, 5),
                    padding='same', activation="tanh")(x)
         return Model(input=z, output=img)
 
@@ -327,9 +324,9 @@ class AtariEmbedding(object):
 
 
 if __name__ == '__main__':
-    aae = AAE(shape=(20, 80, 4))
+    aae = AAE(shape=(210, 160), channel=3)
     cnt = 6
     while cnt < 10:
-        aae.train(epochs=10000, sample_interval=1000, batch_size=2 ** cnt, data_path="cutted_sample.npy")
+        aae.train(epochs=10000, sample_interval=1000, batch_size=2 ** cnt, data_path="obs_capture.npy")
         aae.save()
         cnt += 1

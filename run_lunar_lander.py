@@ -19,7 +19,7 @@ if __name__ == "__main__":
     neuro_structure=  (8, 4, 4)
     env = SubprocVecEnv([lambda: FunctionEnv(lunarLander, (20), neuro_structure) for _ in range(8)])
 
-    model = PPO2(MlpPolicy, env, verbose=1)
+    model = PPO2(MlpPolicy, env, verbose=1, tensorboard_log="./")
     model.learn(50000000)
     model.save("D:/ActionFunctionData/15/15_model_SAC.pkl")
 
